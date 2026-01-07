@@ -19,6 +19,7 @@ type Filters = {
 };
 
 type InitMsg = { type: "init"; requestId: number; baseUrl: string };
+
 type QueryPageMsg = {
   type: "queryPage";
   requestId: number;
@@ -27,13 +28,22 @@ type QueryPageMsg = {
   limit: number;
   cursor?: { ts: string; id: number }; // keyset cursor
 };
+
 type QuerySummaryMsg = {
   type: "querySummary";
   requestId: number;
   files: string[];
   filters: Filters;
 };
-type Msg = InitMsg | QueryPageMsg | QuerySummaryMsg;
+
+type QueryTimeseriesMsg = {
+  type: "queryTimeseries";
+  requestId: number;
+  files: string[];
+  filters: Filters;
+  bucket: "minute" | "hour";
+};
+type Msg = InitMsg | QueryPageMsg | QuerySummaryMsg | QueryTimeseriesMsg;
 
 type Ok = { ok: true; requestId: number; data: any };
 type Err = { ok: false; requestId: number; error: string };
@@ -193,6 +203,41 @@ const querySummary = async (msg: QuerySummaryMsg) => {
   };
 };
 
+const queryTimeseries = async (msg: QueryTimeseriesMsg) => {
+  if (msg.files.length === 0) {
+    return { points: [] };
+  }
+
+  await ensureFiles(msg.files);
+  if (!conn) throw new Error("No connection");
+
+  const where = buildWhere(msg.filters);
+  const bucket = msg.bucket === "minute" ? "minute" : "hour";
+
+  const sql = `
+    SELECT
+      date_trunc('${bucket}', ts) AS t,
+      count(*)::BIGINT AS total,
+      sum(CASE WHEN level='error' THEN 1 ELSE 0 END)::BIGINT AS errors
+    FROM ${readParquetList(msg.files)}
+    WHERE ${where}
+    GROUP BY 1
+    ORDER BY 1 ASC
+  `;
+
+  const result = await conn.query(sql);
+  const points = (result.toArray() as any[]).map((r) => {
+    const o = typeof r?.toJSON === "function" ? r.toJSON() : r;
+    return {
+      t: new Date(o.t).toISOString(),
+      total: Number(o.total ?? 0),
+      errors: Number(o.errors ?? 0),
+    };
+  });
+
+  return { points };
+};
+
 self.onmessage = async (ev: MessageEvent<Msg>) => {
   const msg = ev.data;
   try {
@@ -223,6 +268,13 @@ self.onmessage = async (ev: MessageEvent<Msg>) => {
 
     if (msg.type === "querySummary") {
       const data = await querySummary(msg);
+      const out: Ok = { ok: true, requestId: msg.requestId, data };
+      self.postMessage(out);
+      return;
+    }
+
+    if (msg.type === "queryTimeseries") {
+      const data = await queryTimeseries(msg);
       const out: Ok = { ok: true, requestId: msg.requestId, data };
       self.postMessage(out);
       return;

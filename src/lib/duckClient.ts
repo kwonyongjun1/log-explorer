@@ -57,6 +57,14 @@ export class DuckClient {
     return this.call({ type: "querySummary", files, filters });
   }
 
+  async queryTimeseries(
+    files: string[],
+    filters: Filters,
+    bucket: "minute" | "hour"
+  ) {
+    return this.call({ type: "queryTimeseries", files, filters, bucket });
+  }
+
   async queryPage(
     files: string[],
     filters: Filters,

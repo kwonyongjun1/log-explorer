@@ -4,6 +4,7 @@ import { DuckClient } from "./lib/duckClient";
 import { loadManifest, pickShards } from "./lib/manifest";
 import { readFilters, writeFilters } from "./lib/urlState";
 import type { Filters as UrlFilters } from "./lib/urlState";
+import TimeseriesChart from "./components/TimeseriesChart";
 
 type Row = {
   id: number;
@@ -51,6 +52,9 @@ const App = () => {
       latencyMax: "",
     };
   }, []);
+  const [points, setPoints] = useState<
+    Array<{ t: string; total: number; errors: number }>
+  >([]);
 
   const [filters, setFilters] = useState<UrlFilters>(() =>
     readFilters(defaults)
@@ -131,11 +135,16 @@ const App = () => {
     });
     (async () => {
       try {
-        const [s, page] = await Promise.all([
+        const bucket: "minute" | "hour" =
+          shardFiles.length <= 2 ? "minute" : "hour";
+
+        const [s, ts, page] = await Promise.all([
           c.querySummary(shardFiles, typedFilters),
+          c.queryTimeseries(shardFiles, typedFilters, bucket),
           c.queryPage(shardFiles, typedFilters, 200, null),
         ]);
         setSummary(s);
+        setPoints(ts.points);
         setRows(page.rows);
         setCursor(page.nextCursor);
       } catch (e: any) {
@@ -309,7 +318,9 @@ const App = () => {
           }
         />
       </div>
-
+      <div style={{ marginTop: 12 }}>
+        <TimeseriesChart points={points} />
+      </div>
       <div
         style={{
           marginTop: 12,
